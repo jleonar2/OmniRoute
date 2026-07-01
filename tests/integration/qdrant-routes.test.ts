@@ -27,6 +27,7 @@ process.env.API_KEY_SECRET = "test-secret-qdrant-routes";
 
 const core = await import("../../src/lib/db/core.ts");
 const localDb = await import("../../src/lib/localDb.ts");
+const memorySettings = await import("../../src/lib/memory/settings.ts");
 
 // ── Route imports ──
 const qdrantSettingsRoute = await import("../../src/app/api/settings/qdrant/route.ts");
@@ -49,6 +50,9 @@ async function resetStorage() {
   core.resetDbInstance();
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
+  // #5597 follow-up: the memory-settings cache is a module-level singleton that
+  // survives per-test DB resets — bust it so each test starts from a clean read.
+  memorySettings.invalidateMemorySettingsCache();
 }
 
 async function makeAuthRequest(
@@ -202,6 +206,37 @@ test("PUT without the enabled field must not change memoryVectorStore", async ()
     s.memoryVectorStore,
     "qdrant",
     "editing other fields must leave the engine selection untouched"
+  );
+});
+
+// #5597 follow-up: writing memoryVectorStore to the DB is not enough — retrieval reads
+// through getMemorySettings(), a module-level cache. The PUT handler must invalidate it
+// so the engine switch takes effect without a process restart.
+test("PUT enabled=true invalidates the memory-settings cache (retrieval sees qdrant, no restart)", async () => {
+  // Warm the cache with the pre-toggle value (default auto → not qdrant).
+  const before = await memorySettings.getMemorySettings();
+  assert.notStrictEqual(
+    before.vectorStore,
+    "qdrant",
+    "precondition: cache warmed with a non-qdrant vectorStore"
+  );
+
+  const res = await qdrantSettingsRoute.PUT(
+    (await makeAuthRequest("PUT", "http://localhost/api/settings/qdrant", {
+      enabled: true,
+      host: "qdrant-server",
+      collection: "c",
+    })) as any
+  );
+  assert.strictEqual(res.status, 200);
+
+  // Without the cache invalidation, getMemorySettings() would still return the stale
+  // "auto" value and retrieval would keep routing to sqlite-vec until a restart.
+  const after = await memorySettings.getMemorySettings();
+  assert.strictEqual(
+    after.vectorStore,
+    "qdrant",
+    "PUT must invalidate the memory-settings cache so retrieval routes to Qdrant without a restart"
   );
 });
 
