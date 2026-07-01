@@ -32,6 +32,10 @@ export default function ModelAliasesUnified() {
   });
   const [fromValue, setFromValue] = useState("");
   const [toValue, setToValue] = useState("");
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [editingWildcardIndex, setEditingWildcardIndex] = useState<number | null>(null);
+  const [editWildcardTarget, setEditWildcardTarget] = useState("");
   const t = useTranslations("settings");
   const builtInEntries = Object.entries(builtInAliases);
   const customEntries = Object.entries(customAliases);
@@ -100,6 +104,54 @@ export default function ModelAliasesUnified() {
       showStatus("success", translateOrFallback(t, "saved", "Saved"));
     } catch (error) {
       console.error("Failed to remove exact alias:", error);
+      showStatus("error", translateOrFallback(t, "errorOccurred", "An error occurred"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveExactEdit = async () => {
+    if (editingKey === null || !editValue.trim()) return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/settings/model-aliases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from: editingKey, to: editValue.trim() }),
+      });
+      if (!res.ok) throw new Error("Failed to update alias");
+      const data = await res.json();
+      setCustomAliases(data.custom || {});
+      setEditingKey(null);
+      setEditValue("");
+      showStatus("success", translateOrFallback(t, "saved", "Saved"));
+    } catch (error) {
+      console.error("Failed to update alias:", error);
+      showStatus("error", translateOrFallback(t, "errorOccurred", "An error occurred"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveWildcardEdit = async (index: number) => {
+    if (!editWildcardTarget.trim()) return;
+    setSaving(true);
+    try {
+      const updated = wildcardAliases.map((alias, i) =>
+        i === index ? { ...alias, target: editWildcardTarget.trim() } : alias
+      );
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ wildcardAliases: updated }),
+      });
+      if (!res.ok) throw new Error("Failed to update wildcard alias");
+      setWildcardAliases(updated);
+      setEditingWildcardIndex(null);
+      setEditWildcardTarget("");
+      showStatus("success", translateOrFallback(t, "saved", "Saved"));
+    } catch (error) {
+      console.error("Failed to update wildcard alias:", error);
       showStatus("error", translateOrFallback(t, "errorOccurred", "An error occurred"));
     } finally {
       setSaving(false);
@@ -288,15 +340,67 @@ export default function ModelAliasesUnified() {
                 <span className="material-symbols-outlined text-[14px] text-text-muted">
                   arrow_forward
                 </span>
-                <code className="text-xs text-emerald-400/80 flex-1 truncate">{to}</code>
-                <button
-                  type="button"
-                  onClick={() => void removeExactAlias(from)}
-                  disabled={saving}
-                  className="p-1 rounded hover:bg-red-500/10 text-text-muted hover:text-red-400 transition-all"
-                >
-                  <span className="material-symbols-outlined text-[16px]">close</span>
-                </button>
+                {editingKey === from ? (
+                  <>
+                    <input
+                      type="text"
+                      value={editValue}
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void saveExactEdit();
+                        if (e.key === "Escape") {
+                          setEditingKey(null);
+                          setEditValue("");
+                        }
+                      }}
+                      className="flex-1 min-w-0 rounded border border-border/50 bg-surface px-2 py-1 text-xs text-text-main focus:outline-none focus:border-purple-500/50"
+                      autoFocus
+                      disabled={saving}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void saveExactEdit()}
+                      disabled={saving || !editValue.trim()}
+                      className="p-1 rounded hover:bg-emerald-500/10 text-text-muted hover:text-emerald-400 transition-all"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">check</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingKey(null);
+                        setEditValue("");
+                      }}
+                      disabled={saving}
+                      className="p-1 rounded hover:bg-white/10 text-text-muted hover:text-text-main transition-all"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">close</span>
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <code className="text-xs text-emerald-400/80 flex-1 truncate">{to}</code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingKey(from);
+                        setEditValue(to);
+                      }}
+                      disabled={saving}
+                      className="p-1 rounded hover:bg-purple-500/10 text-text-muted hover:text-purple-400 transition-all"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">edit</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void removeExactAlias(from)}
+                      disabled={saving}
+                      className="p-1 rounded hover:bg-red-500/10 text-text-muted hover:text-red-400 transition-all"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">close</span>
+                    </button>
+                  </>
+                )}
               </div>
             ))
           )}
@@ -326,15 +430,69 @@ export default function ModelAliasesUnified() {
                 <span className="material-symbols-outlined text-[14px] text-text-muted">
                   arrow_forward
                 </span>
-                <code className="text-xs text-emerald-400/80 flex-1 truncate">{alias.target}</code>
-                <button
-                  type="button"
-                  onClick={() => void removeWildcardAlias(index)}
-                  disabled={saving}
-                  className="p-1 rounded hover:bg-red-500/10 text-text-muted hover:text-red-400 transition-all"
-                >
-                  <span className="material-symbols-outlined text-[16px]">close</span>
-                </button>
+                {editingWildcardIndex === index ? (
+                  <>
+                    <input
+                      type="text"
+                      value={editWildcardTarget}
+                      onChange={(e) => setEditWildcardTarget(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void saveWildcardEdit(index);
+                        if (e.key === "Escape") {
+                          setEditingWildcardIndex(null);
+                          setEditWildcardTarget("");
+                        }
+                      }}
+                      className="flex-1 min-w-0 rounded border border-border/50 bg-surface px-2 py-1 text-xs text-text-main focus:outline-none focus:border-purple-500/50"
+                      autoFocus
+                      disabled={saving}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void saveWildcardEdit(index)}
+                      disabled={saving || !editWildcardTarget.trim()}
+                      className="p-1 rounded hover:bg-emerald-500/10 text-text-muted hover:text-emerald-400 transition-all"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">check</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingWildcardIndex(null);
+                        setEditWildcardTarget("");
+                      }}
+                      disabled={saving}
+                      className="p-1 rounded hover:bg-white/10 text-text-muted hover:text-text-main transition-all"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">close</span>
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <code className="text-xs text-emerald-400/80 flex-1 truncate">
+                      {alias.target}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingWildcardIndex(index);
+                        setEditWildcardTarget(alias.target);
+                      }}
+                      disabled={saving}
+                      className="p-1 rounded hover:bg-purple-500/10 text-text-muted hover:text-purple-400 transition-all"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">edit</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void removeWildcardAlias(index)}
+                      disabled={saving}
+                      className="p-1 rounded hover:bg-red-500/10 text-text-muted hover:text-red-400 transition-all"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">close</span>
+                    </button>
+                  </>
+                )}
               </div>
             ))
           )}
